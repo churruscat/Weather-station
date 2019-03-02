@@ -9,3 +9,5 @@ Server is based on a Raspberry, and can be used for any other IOT project.
 Agent: ESP8266/arduino programs
 Server: Raspberry Pi configuration fies
 in root: Documentstion
+# Contact me at
+churruscat@gmail.com
