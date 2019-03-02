@@ -1,0 +1,97 @@
+version: '2.1'
+services:
+ influxdb:
+    container_name: influxdb
+    image: influxdb
+    ports:
+      - 8086:8086
+      - 8088:8088
+    volumes:
+      - /IOTServer/influxdb/influxdb.conf:/etc/influxdb/influxdb.conf:ro
+      - /IOTServer/influxdb:/var/lib/influxdb
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://127.0.0.1:8086/ping"]
+      interval: 30s
+      timeout: 1s
+      retries: 24
+
+  telegraf:
+    container_name: telegraf
+    image: telegraf
+    volumes:
+      - /IOTServer/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/rootfs/sys:ro
+      - /proc:/rootfs/proc:ro
+      - /etc:/rootfs/etc:ro      
+    depends_on:
+      influxdb:
+        condition: service_started
+
+  mosquitto:
+    container_name: mosquitto
+    image: churruscat/mosquitto-rpi
+    user: "1001:1001"
+    ports:
+      - 1883:1883
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /IOTServer/mqtt:/mqtt/config:ro
+      - /IOTServer/mqtt:/mqtt/data
+    restart: on-failure
+
+  node-red:
+    container_name: node-red
+    image: nodered/node-red-docker:rpi-v8
+    environment:
+      - http_proxy=http://192.168.1.11:1880
+      - https_proxy=http://192.168.1.11:1880
+    ports:
+      - 1880:1880
+    volumes:
+      - /IOTServer/node-red:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    restart: on-failure
+    depends_on:
+      mosquitto:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:1880"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  portainer:
+    container_name: portainer
+    image: portainer/portainer
+    ports:
+      - 9000:9000
+    volumes:
+      - /IOTServer/portainer:/data:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: on-failure
+      
+  nginx:
+    container_name: nginx
+    image: lsioarmhf/nginx-armhf
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /IOTServer/nginx:/config:rw
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+
+  grafana:
+    container_name: grafana
+    image: churruscat/grafana-rpi
+    ports:
+      - 3000:3000
+    volumes:
+      - /IOTServer/grafana:/etc/grafana:rw
+      - /IOTServer/grafana:/var/lib/grafana:rw
+    restart: on-failure
+    depends_on:
+      influxdb:
+        condition: service_healthy
