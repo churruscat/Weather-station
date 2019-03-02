@@ -6,8 +6,8 @@ The agent is based in an ESP8266 (a kind of Arduino with WiFi), in modular appro
 ## MQTT Server (+ other IOT functions)
 Server is based on a Raspberry, and can be used for any other IOT project.
 ## Directories
-Agent: ESP8266/arduino programs 
+Agent: ESP8266/arduino programs  
 Server: Raspberry Pi configuration fies 
-in root: Documentstion 
+in root: Documentation   
 # Contact me at
 churruscat@gmail.com
