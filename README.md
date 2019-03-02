@@ -7,7 +7,7 @@ The agent is based in an ESP8266 (a kind of Arduino with WiFi), in modular appro
 Server is based on a Raspberry, and can be used for any other IOT project.
 ## Directories
 Agent: ESP8266/arduino programs  
-Server: Raspberry Pi configuration fies 
+Server: Raspberry Pi configuration fies    
 in root: Documentation   
 # Contact me at
 churruscat@gmail.com
