@@ -1,192 +1,267 @@
 /**
- ESP-12E  (ESP8266) to work as an IOT client
- it reads data from differenta gauges and sends data toan 
- MQTT client (see mqtt_mosquitto.ino)
- Morrastronics -- by chuRRuscat
- v1.0 2017 initial version
- v2.0 2018 mqtt & connectivity  functions separated
+	ESP-12E  (ESP8266) manejado desde IBM IoT
+	en funcion de la libreria (mqtt_Mosquitto o mqtt_Bluemix)
+	manda los datos a un servidor mqtt u otro
+	Morrastronics -- by chuRRuscat
+	v1.0 2017 initial version
+	v2.0 2018 mqtt & connectivity  functions separated
+	v2.1 2019 anyadido define CON_ LLUVIA y cambios en handleupdate
+	v2.5 2020 reprogrammed handling of reconnections
 */
 
-#undef CON_DEBUG
-//#define CON_DEBUG
-/* Set up a macro that expands to print in debug mode
-   or does nothing when in production 
-*/
-#ifdef CON_DEBUG
-  #define DPRINT(...)    Serial.print(__VA_ARGS__)
-  #define DPRINTLN(...)  Serial.println(__VA_ARGS__)
+#define PRINT_SI
+#ifdef  PRINT_SI
+#define DPRINT(...)    Serial.print(__VA_ARGS__)
+#define DPRINTLN(...)  Serial.println(__VA_ARGS__)
+#define DPRINTF(...)   Serial.printf(__VA_ARGS__)
 #else
-  #define DPRINT(...)     // blank line
-  #define DPRINTLN(...)   // blank line
+#define DPRINT(...)     //blank line
+#define DPRINTLN(...)   //blank line
+#define DPRINTF(...)
 #endif
 /*************************************************
- ** -------- Personalized values -------------- **
- * **********************************************/
-#include "1stDevice.h"
-#include "mqtt_mosquitto.h"
-/***************************************************
- ** -------- End of Personalized values --------- **
+ ** -------- Personalised values ----------- **
+ * *****************************************/
+/* select sensor and its values */ 
+
+//#include "pruebas.h"  
+//#include "salon.h"
+//#include "jardin.h"
+#include "terraza.h"
+#include "mqtt_mosquitto.h"  /* mqtt values */
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+#include <ArduinoJson.h>
+#define PRESSURE_CORRECTION (1.080)  // HPAo/HPHh 647m
+#define ACTUAL_BME280_ADDRESS BME280_ADDRESS_ALTERNATE   // (0x77)depends on sensor manufacturer
+//#define ACTUAL_BME280_ADDRESS BME280_ADDRESS           // (0x77)
+/*************************************************
+ ** ----- End of Personalised values ------- **
  * ***********************************************/
 #define AJUSTA_T 10000 // To adjust delay in some places along the program
 #define SDA D5   // for BME280 I2C 
 #define SCL D6
 #define interruptPin D7 // PIN where I'll connect the rain gauge
+#define PIN_UV D8
 #define sensorPin    A0  // analog PIN  of Soil humidity sensor
-#define CONTROL_HUMEDAD D2  // Transistor base that swiths on and off soil sensor
+#define CONTROL_HUMEDAD D2  // Transistor base that switches on&off soil sensor
 #define L_POR_BALANCEO 0.2794 // liter/m2 for evey rain gauge interrupt
 #include <Wire.h>             //libraries for sensors and so on
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <Pin_NodeMCU.h>
-#define PRESSURE_CORRECTION (1.080)  // HPAo/HPHh 647m
+#include "Pin_NodeMCU.h"
 
-#define BME280_ADDRESS   (0x76)   //IMPORTANT, sometimes it is 0x77
 Adafruit_BME280 sensorBME280;     // this represents the sensor
 
-#define JSONBUFFSIZE 250
-#define DATOSJSONSIZE 250
+#define _BUFFSIZE 250
+#define DATOS_SIZE 250
 
 volatile int contadorPluvi = 0; // must be 'volatile',for counting interrupt 
-// ********* these are the sensor variables that will be exposed ********** 
-float temperatura,humedadAire,presionHPa,lluvia=0,sensacion=20;
+/* ********* these are the sensor variables that will be exposed **********/ 
+float lluvia=0;
 int humedadMin=HUMEDAD_MIN,
-    humedadMax=HUMEDAD_MAX,
-    humedadSuelo,humedadCrudo;
-int humedadCrudo1,humedadCrudo2;
-
-// other variables
-int intervaloConex INTERVALO_CONEX;
-char datosJson[DATOSJSONSIZE];
-
-// Interrupt counter for rain gauge
-void ICACHE_RAM_ATTR balanceoPluviometro() {  
-  contadorPluvi++;
-}
+		humedadMax=HUMEDAD_MAX, 
+		humedadSuelo=0,humedadCrudo=HUMEDAD_MIN;
+int humedadCrudo1,humedadCrudo2,
+		intervaloConex=INTERVALO_CONEX;
+#define JSONBUFFSIZE 250
+#define DATOSJSONSIZE 250   
+char datosJson[DATOS_SIZE];
+StaticJsonDocument<DATOSJSONSIZE> docJson;
+JsonObject valores=docJson.createNestedObject();  //Read values
+JsonObject claves=docJson.createNestedObject();   // key values (location and deviceId)
+#ifdef CON_LLUVIA
+	// Interrupt counter for rain gauge
+	void ICACHE_RAM_ATTR balanceoPluviometro() {  
+	contadorPluvi++;
+  }
+#endif
+#ifdef CON_UV
+  int lecturaUV;
+  float UV_Watt;
+  int   UV_Index;  
+#endif  
 
 // let's start, setup variables
 void setup() {
 boolean status;
-#ifdef CON_DEBUG
- Serial.begin(115200);
-#endif 
- DPRINTLN("starting ... "); 
- Wire.begin(SDA,SCL);
- status = sensorBME280.begin();  
- if (!status) {
-   DPRINTLN("Can't connect to BME Sensor!  ");    
- }
- /* start PINs */
- pinMode(CONTROL_HUMEDAD,OUTPUT);
- pinMode(interruptPin, INPUT);
- attachInterrupt(digitalPinToInterrupt(interruptPin), balanceoPluviometro, RISING);
- digitalWrite(CONTROL_HUMEDAD, HIGH); // prepare to read soil humidity sensor
- espera(1000);
- humedadCrudo1 = analogRead(sensorPin); //first read to have date to get averages
- espera(1000);
- humedadCrudo2 = analogRead(sensorPin);  //second read
- digitalWrite(CONTROL_HUMEDAD, LOW);
- wifiConnect();   // prepare WiFi
- mqttConnect();   // and MQTT environment 
- delay(50);
- initManagedDevice();  // Setup the device to the IOT Server
- publicaDatos();       // and publish data. This is the function that gets and sends
+	
+	Serial.begin(115200);
+	DPRINTLN("starting ... "); 
+	Wire.begin(SDA,SCL);
+	status = sensorBME280.begin(ACTUAL_BME280_ADDRESS);  
+	if (!status) {
+		DPRINTLN("Can't connect to BME Sensor!  ");    
+	}
+	/* start PINs first soil Humidity, then Pluviometer */
+	pinMode(CONTROL_HUMEDAD,OUTPUT);
+	#ifdef CON_LLUVIA
+		pinMode(interruptPin, INPUT_PULLUP);
+		attachInterrupt(digitalPinToInterrupt(interruptPin), balanceoPluviometro, FALLING);
+	#endif
+	digitalWrite(CONTROL_HUMEDAD, HIGH); // prepare to read soil humidity sensor
+	espera(1000);
+	humedadCrudo1 = analogRead(sensorPin); //first read to have date to get averages
+	espera(1000);
+	humedadCrudo2 = analogRead(sensorPin);  //second read
+	digitalWrite(CONTROL_HUMEDAD, LOW);
+	wifiConnect();
+	mqttConnect();
+	sensorBME280.setSampling(Adafruit_BME280::MODE_NORMAL);
+  #ifdef CON_UV
+    pinMode(PIN_UV, INPUT);
+    //analogReadResolution(12);
+    //analogSetPinAttenuation(PIN_UV,ADC_11db) ;    
+  #endif
+	DPRINTLN(" los dos connect hechos, ahora OTA");
+	ArduinoOTA.setHostname(DEVICE_ID); 
+	ArduinoOTA.onStart([]() {
+		String type;
+		if (ArduinoOTA.getCommand() == U_FLASH) {
+			type = "sketch";
+		} else { // U_FS
+			type = "filesystem";
+		}
+		// NOTE: if updating FS this would be the place to unmount FS using FS.end()
+		DPRINTLN("Start updating " + type);
+	});
+	ArduinoOTA.onEnd([]() {
+		DPRINTLN("\nEnd");
+	});
+	ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    DPRINTF("Progress: %u%%\r\n",(progress / (total / 100)));
+	});
+	ArduinoOTA.onError([](ota_error_t error) {
+			DPRINTF("Error[%u]: ", error);
+		if (error == OTA_AUTH_ERROR) {
+			DPRINTLN("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) { 
+			DPRINTLN("Begin Failed");
+		} else if (error == OTA_CONNECT_ERROR) {
+			DPRINTLN("Connect Failed");
+		} else if (error == OTA_RECEIVE_ERROR) {
+			DPRINTLN("Receive Failed");
+		} else if (error == OTA_END_ERROR) {
+			DPRINTLN("End Failed");
+		}
+	});
+	ArduinoOTA.begin(); 
+  claves["deviceId"]=DEVICE_ID;
+  claves["location"]=LOCATION;
+	delay(50);
+	publicaDatos();      // and publish data. This is the function that gets and sends
 }
 
 uint32_t ultima=0;
 
 void loop() {
- DPRINT("*");
- if (!loopMQTT()) {  // Check if there are MQTT messages and if the device is connected  
-   DPRINTLN("Connection lost; retrying");
-   sinConectividad();        
-     mqttConnect();
-     initManagedDevice();  // subscribe again
- } 
- if ((millis()-ultima)>intervaloConex) {   // if it is time to send data, do it
-   DPRINT("interval:");DPRINT(intervaloConex);
-   DPRINT("\tmillis :");DPRINT(millis());
-   DPRINT("\tultima :");DPRINTLN(ultima);
-   publicaDatos();        // publish data. This is the function that gets and sends
-   ultima=millis();
- }
- espera(1000); and wait
+	DPRINT("*");
+	if (!loopMQTT()) {  // Check if there are MQTT messages and if the device is connected  
+		DPRINTLN("Connection lost; retrying");
+		sinConectividad();        
+		mqttConnect();
+ 	}
+  ArduinoOTA.handle(); 
+	if ((millis()-ultima)>intervaloConex) {   // if it is time to send data, do it
+	DPRINT("interval:");DPRINT(intervaloConex);
+	DPRINT("\tmillis :");DPRINT(millis());
+	DPRINT("\tultima :");DPRINTLN(ultima);
+	while (!publicaDatos()) {     // repeat until publicadatos sends data
+		espera(1000);        // publish data. This is the function that gets and sends
+		}   
+		ultima=millis();
+	}
+	espera(1000); //and wait
+}
+
+/****************************************** 
+* this function sends data to MQTT broker, 
+* first, it calls to tomaDatos() to read data 
+*********************************************/
+boolean publicaDatos() {
+	int k=0;
+	char signo;
+	boolean pubresult=true;
+		 
+	if (!tomaDatos()) {
+			valores.remove("temp");      
+      valores.remove("HPa");  
+      valores.remove("hAire");
+      serializeJson(docJson,datosJson);
+		} else {
+  	  serializeJson(docJson,datosJson);
+	}
+	// and publish them.
+	DPRINTLN("preparing to send");
+	pubresult = enviaDatos(publishTopic,datosJson); 
+  if (!tomaDatos) ESP.restart();    
+	if (pubresult){
+		lluvia=0.0;      // data sent successfully, set rain to zero 
+	}
+	return pubresult;
 }
 
 /* get data function. Read the sensors and set values in global variables */
 /* get data function. Read the sensors and set values in global variables */
 boolean tomaDatos (){
-  float bufTemp,bufTemp1,bufHumedad,bufHumedad1,bufPresion,bufPresion1;
-  boolean escorrecto=true;  //return value will be true unless there is a problem
-  /* read and then get the mean */
-  bufHumedad= sensorBME280.readHumidity();   
-  bufTemp= sensorBME280.readTemperature();
-  bufPresion=sensorBME280.readPressure()/100.0F;
-  /* activate soil sensor setting the transistor base */
-  digitalWrite(CONTROL_HUMEDAD, HIGH);
-  espera(10000);  
-  humedadCrudo = analogRead(sensorPin); // and read soil moisture
-  humedadCrudo=constrain(humedadCrudo,humedadMin,humedadMax); 
-  digitalWrite(CONTROL_HUMEDAD, LOW);  // disconnect soil sensor
-  // calculate the moving average of soil humidity of last three values 
-  humedadCrudo=(humedadCrudo1+humedadCrudo2+humedadCrudo)/3;
-  humedadCrudo2=humedadCrudo1;
-  humedadCrudo1=humedadCrudo;
-  // read again from BME280 sensor
-  bufHumedad1= sensorBME280.readHumidity();
-  bufTemp1= sensorBME280.readTemperature();
-  bufPresion1= sensorBME280.readPressure()/100.0F;
-  DPRINTLN("Data read"); 
-  lluvia+=contadorPluvi*L_POR_BALANCEO;
-  detachInterrupt(digitalPinToInterrupt(interruptPin));
-  contadorPluvi=0;
-  attachInterrupt(digitalPinToInterrupt(interruptPin), balanceoPluviometro, RISING);
-  if (humedadMin==humedadMax) humedadMax+=1; 
-  humedadSuelo = map(humedadCrudo,humedadMin,humedadMax,0,100);
-  /* if data could not be read for whatever reason, raise a message (in CONDEBUG mode) 
-    Else calculate the mean */
-  if (isnan(bufHumedad) || isnan(bufTemp) || isnan(bufHumedad1) || isnan(bufTemp1) ) {       
-     DPRINTLN("I could not read from BME280msensor!");       
-     escorrecto=false;    // flag that BME280 could not read
-  } else {
-  temperatura=(bufTemp+bufTemp1)/2;
-  humedadAire=(bufHumedad+bufHumedad1)/2;
-  presionHPa=(bufPresion+bufPresion1)/2*PRESSURE_CORRECTION;
-  if (temperatura>60) escorrecto=false;   //if temperature out of reasonable range
-  if ((humedadAire>101)||(humedadAire<0)) escorrecto=false;    // or humidity
-  DPRINT("\tTemperature: \t ") ;  DPRINT(temperatura);
-  DPRINT("\tAir humidity: \t ");  DPRINT(humedadAire);
-  DPRINT("\tPressure HPa : \t "); DPRINT(presionHPa);
-  DPRINT("\tMoisture: \t ")     ; DPRINT(humedadSuelo);
-  DPRINT("\tRaw Moisture: \t"); DPRINTLN(humedadCrudo);  
-  } 
-  return escorrecto;
-}
-
-
-/* this function sends data to MQTT broker */
-void publicaDatos() {
-  int k=0;
-  char signo;
-  boolean pubresult=true;  
- 
-  while(!tomaDatos()) {   // if tomaDatos() returns false, retry 30 times 
-     espera(1000);        // waiting 1 sec between iterations
-     if(k++>30) {         // after 30 iterations with no data, return
-      return; 
-     }
-  }
-  // Data is read an stored in global var. Prepare data in JSON mode
-  if (temperatura<0) {  // to avoid probles with sign
-    signo='-';          // if negative , set '-' character
-    temperatura*=-1;  // if temp was negative, convert it positive 
-  }  else signo=' ';
-  // prepare the message
-  sprintf(datosJson,"[{\"temp\":%c%d.%1d,\"hAire\":%d,\"hSuelo\":%d,\"hCrudo\":%d,\"HPa\":%d,\"l/m2\":%d.%3d},{\"deviceId\":\"%s\"}]",
-        signo,(int)temperatura, (int)(temperatura * 10.0) % 10,\
-        (int)humedadAire, (int) humedadSuelo,(int)humedadCrudo,(int)presionHPa,
-        (int)lluvia, (int)(lluvia * 10.0) % 10,DEVICE_ID);
-  // and publish them.
-  pubresult = enviaDatos(publishTopic,datosJson);
-  if (pubresult) 
-    {lluvia=0;}      // I sent data was successful, set rain to zero 
+	boolean escorrecto=false;  //return value will be false unless it works
+  float temperatura,humedadAire,presionHPa;
+	int i=0;
+	/* read and then get the mean */
+	DPRINTLN("begin tomadatos");
+	#ifdef CON_SUELO
+		/* activate soil sensor setting the transistor base */
+		digitalWrite(CONTROL_HUMEDAD, HIGH);
+		espera(1000);  
+		humedadCrudo = analogRead(sensorPin); // and read soil moisture
+		humedadCrudo=constrain(humedadCrudo,humedadMin,humedadMax); 
+		digitalWrite(CONTROL_HUMEDAD, LOW);  // disconnect soil sensor
+		// calculate the moving average of soil humidity of last three values 
+		humedadCrudo=(humedadCrudo1+humedadCrudo2+humedadCrudo)/3;
+		humedadSuelo = map(humedadCrudo,humedadMin,humedadMax,0,100);
+		humedadCrudo2=humedadCrudo1;
+		humedadCrudo1=humedadCrudo;
+    valores["hCrudo"]=humedadCrudo;
+    valores["hSuelo"]=humedadSuelo;    
+	#endif
+	// read from BME280 sensor
+	humedadAire= sensorBME280.readHumidity();
+	temperatura= sensorBME280.readTemperature();
+	presionHPa= sensorBME280.readPressure();
+	if (!isnan(presionHPa)){
+			presionHPa=presionHPa/100.0F*PRESSURE_CORRECTION;
+	}
+	#ifdef CON_LLUVIA 
+		lluvia+=contadorPluvi*L_POR_BALANCEO;  
+    if (lluvia==0) 
+        valores["l/m2"]=serialized(String(0.0));
+    else
+       valores["l/m2"]=lluvia;     
+    contadorPluvi=0;   
+	#endif
+      #ifdef CON_UV
+      lecturaUV = analogRead(PIN_UV);
+      UV_Watt=10/1.2*(3.3*lecturaUV/1023-1);  // mWatt/cm^2, at 2.2 V read there are 10mw/cm2
+      UV_Index=(int) UV_Watt;
+      DPRINT(" analog ");     DPRINTLN(lecturaUV);
+      DPRINT("/t UV Watt  ");DPRINTLN(UV_Watt);
+      DPRINT("/t UV index  ");DPRINTLN(UV_Index);
+      valores["indexUV"]=UV_Watt;
+    #endif
+	if (humedadMin==humedadMax) humedadMax+=1;
+	if (temperatura==0 && presionHPa==0){ 
+	   escorrecto=false;  // read not correct
+     DPRINTLN("all values are zero");
+	}	else {
+    valores["hAire"]=(int)humedadAire;
+    valores["HPa"]=(int)presionHPa;
+    valores["temp"]=temperatura+0.001;
+    if (humedadAire>200 || humedadAire==0 || isnan(humedadAire))
+        valores.remove("hAire");   // y values are out of range, donn't send them
+    if (temperatura > 90 || temperatura <-50|| isnan(temperatura))
+        valores.remove("temp");
+	}
+	escorrecto=true;
+	return escorrecto;
 }

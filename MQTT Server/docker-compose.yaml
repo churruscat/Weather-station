@@ -1,24 +1,36 @@
-version: '2.1'
+version: '3.6'
 services:
- influxdb:
+  grafana: 
+    container_name: grafana
+    image: grafana/grafana
+    ports:
+      - 3000:3000
+    volumes:
+      - /IOTServer/grafana:/etc/grafana:rw
+      - /IOTServer/grafana:/var/lib/grafana:rw
+    restart: on-failure
+    depends_on:
+      - influxdb
+
+  influxdb:
     container_name: influxdb
-    image: influxdb
+    image: influxdb:latest
     ports:
       - 8086:8086
-      - 8088:8088
     volumes:
       - /IOTServer/influxdb/influxdb.conf:/etc/influxdb/influxdb.conf:ro
       - /IOTServer/influxdb:/var/lib/influxdb
+    #network_mode: "host"
     restart: on-failure
     healthcheck:
       test: ["CMD", "curl", "-sI", "http://127.0.0.1:8086/ping"]
-      interval: 30s
+      interval: 60s
       timeout: 1s
-      retries: 24
+      retries: 10
 
   telegraf:
     container_name: telegraf
-    image: telegraf
+    image: arm32v7/telegraf
     volumes:
       - /IOTServer/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -26,42 +38,20 @@ services:
       - /proc:/rootfs/proc:ro
       - /etc:/rootfs/etc:ro      
     depends_on:
-      influxdb:
-        condition: service_started
-
+      - influxdb
+      
   mosquitto:
     container_name: mosquitto
-    image: churruscat/mosquitto-rpi
+    image: eclipse-mosquitto
     user: "1001:1001"
     ports:
       - 1883:1883
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /IOTServer/mqtt:/mqtt/config:ro
-      - /IOTServer/mqtt:/mqtt/data
+      - /IOTServer/mqtt:/mosquitto/config:ro
+      - /IOTServer/mqtt:/mosquitto/data:rw
+      - /IOTServer/log:/mosquitto/log:rw
     restart: on-failure
-
-  node-red:
-    container_name: node-red
-    image: nodered/node-red-docker:rpi-v8
-    environment:
-      - http_proxy=http://192.168.1.11:1880
-      - https_proxy=http://192.168.1.11:1880
-    ports:
-      - 1880:1880
-    volumes:
-      - /IOTServer/node-red:/data
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    restart: on-failure
-    depends_on:
-      mosquitto:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:1880"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
 
   portainer:
     container_name: portainer
@@ -72,26 +62,27 @@ services:
       - /IOTServer/portainer:/data:rw
       - /var/run/docker.sock:/var/run/docker.sock
     restart: on-failure
-      
+
   nginx:
     container_name: nginx
-    image: lsioarmhf/nginx-armhf
+    image: arm32v7/nginx
     ports:
       - 80:80
       - 443:443
     volumes:
-      - /IOTServer/nginx:/config:rw
+      - /IOTServer/nginx:/etc/nginx:rw
+      - /IOTServer/log:/config/log/nginx
+      - /IOTServer/nginx/www:/opt/www
       - /etc/letsencrypt:/etc/letsencrypt:ro
 
-  grafana:
-    container_name: grafana
-    image: churruscat/grafana-rpi
-    ports:
-      - 3000:3000
+   mqttdbs:
+    container_name: mqttdbs
+    image: churruscat/mqttdbs:latest
     volumes:
-      - /IOTServer/grafana:/etc/grafana:rw
-      - /IOTServer/grafana:/var/lib/grafana:rw
-    restart: on-failure
+      - /IOTServer/mqttdbs:/etc/mqttdbs:rw
     depends_on:
-      influxdb:
-        condition: service_healthy
+      - mosquitto
+      - influxdb
+    restart: on-failure
+
+
