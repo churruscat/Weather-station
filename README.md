@@ -1,5 +1,5 @@
-#This project has been renamed to Weather-station 
-#weather_station
+## This project has been renamed to Weather-station 
+# weather_station
 Weather station based in multiple ESP8266 agents and a Raspberry IOT server based on Docker. 
 Raspberry runs mqtt broker (mosquitto), influxdb (database), grafana (graphics visualizer) and other containers to implement the IOT server.
 ## MQTT agent(s)
