@@ -75,7 +75,7 @@ services:
       - /IOTServer/nginx/www:/opt/www
       - /etc/letsencrypt:/etc/letsencrypt:ro
 
-   mqttdbs:
+  mqttdbs:
     container_name: mqttdbs
     image: churruscat/mqttdbs:latest
     volumes:

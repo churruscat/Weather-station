@@ -9,7 +9,7 @@
  ** ---------- Personalized Values ------------- **
  * ***********************************************/
 #define ESPERA_NOCONEX 30000  // When no conection, wait 30 sec
-char server[] = "192.168.1.11";
+//char server[] = "192.168.1.11";
 #define DEVICE_TYPE "ESP12E-Meteo"
 char* ssid;
 char* password;
