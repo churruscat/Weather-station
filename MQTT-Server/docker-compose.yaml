@@ -14,7 +14,7 @@ services:
 
   influxdb:
     container_name: influxdb
-    image: influxdb:latest
+    image: influxdb:1.8
     ports:
       - 8086:8086
     volumes:
@@ -36,7 +36,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /sys:/rootfs/sys:ro
       - /proc:/rootfs/proc:ro
-      - /etc:/rootfs/etc:ro      
+      - /etc:/rootfs/etc:ro 
+      - /opt:/opt:ro     
     depends_on:
       - influxdb
       
@@ -74,6 +75,17 @@ services:
       - /IOTServer/log:/config/log/nginx
       - /IOTServer/nginx/www:/opt/www
       - /etc/letsencrypt:/etc/letsencrypt:ro
+    #network_mode: "host"
+
+  kmlserver:
+    container_name: kmlserver
+    image: churruscat/kmlserver
+    ports:
+      - 5000:5000
+    volumes:
+      - /IOTServer/kmlserver:/kmlserver:rw
+      - /IOTServer/kmlserver/log:/kmlserver/log:rw
+    restart: on-failure
 
   mqttdbs:
     container_name: mqttdbs
